@@ -67,6 +67,11 @@
       <h2 id="h-params">性質</h2>
       <div id="sliders"></div>
     </section>
+    <section aria-labelledby="h-food">
+      <h2 id="h-food">餌</h2>
+      <div class="row"><button id="feed">餌を落とす</button></div>
+      <p class="note">水槽の空いている場所を軽くタップしても、そこに餌を落とせます。イカは近づいて触腕で捕まえます。</p>
+    </section>
     <section aria-labelledby="h-time">
       <h2 id="h-time">時間</h2>
       <div class="row">
@@ -298,17 +303,30 @@ fn spots(p: vec3f, scale: f32, grow: f32, dens: f32) -> vec2f {
   } else if (id < 24.5) {
     base = vec3f(0.62, 0.64, 0.66);
     wrap = 0.9;
-  } else {
+  } else if (id < 35.0) {
     let c = lp.z;
     let ang = atan2(lp.y, lp.x);
     let pupil = smoothstep(0.86, 0.9, c);
     let iris = smoothstep(0.6, 0.68, c) * (1.0 - pupil);
     let stri = 0.5 + 0.5 * sin(ang * 22.0 + vnoise(lp * 8.0) * 3.0);
-    let irisCol = mix(vec3f(0.5, 0.36, 0.12), vec3f(0.22, 0.34, 0.3), stri * 0.35 + 0.3 * (c - 0.6) / 0.26) * 0.8;
-    let speck = spots(lp, 7.0, 1.1, 0.55).x;
-    let sclera = vec3f(0.3, 0.32, 0.34) * (0.7 + 0.3 * vnoise(lp * 14.0)) * (1.0 - speck * 0.75);
+    let irisCol = mix(vec3f(0.2, 0.26, 0.32), vec3f(0.34, 0.38, 0.42), stri * 0.4);
+    let sclera = vec3f(0.07, 0.1, 0.17) * (0.8 + 0.2 * vnoise(lp * 14.0));
     base = mix(mix(sclera, irisCol, iris), vec3f(0.005, 0.007, 0.012), pupil);
     rough = 0.07; f0 = 0.05; wrap = 0.1; inside = 0.85;
+    let top = mix(1.08, -0.2, u.misc.y);
+    let bot = mix(-1.08, -0.2, u.misc.y);
+    let lid = max(smoothstep(top - 0.05, top, lp.y), 1.0 - smoothstep(bot, bot + 0.05, lp.y));
+    let lidCol = vec3f(0.62, 0.4, 0.29) * (0.8 + 0.2 * vnoise(lp * 10.0)) * (1.0 - 0.55 * spots(lp, 5.0, 1.0, 0.5).x);
+    base = mix(base, lidCol, lid);
+    rough = mix(rough, 0.45, lid); f0 = mix(f0, 0.03, lid); wrap = mix(wrap, 0.5, lid); inside = mix(inside, 0.5, lid);
+  } else {
+    let seg = 0.5 + 0.5 * cos(lp.x * 26.0);
+    let gut = exp(-pow((lp.y + 0.15) / 0.25, 2.0)) * smoothstep(0.9, 0.2, abs(lp.x));
+    base = mix(vec3f(0.82, 0.55, 0.38), vec3f(0.62, 0.3, 0.2), seg * 0.4 + gut * 0.5);
+    let eye = smoothstep(0.7, 0.85, -lp.x) * smoothstep(0.35, 0.6, abs(lp.z));
+    base = mix(base, vec3f(0.02), eye);
+    rough = 0.3; f0 = 0.04; wrap = 0.6; inside = 0.7;
+    emit = vec3f(0.05, 0.025, 0.015);
   }
   let sun = SUN * (0.45 + 0.9 * caustic(i.wp)) * inside;
   let amb = mix(vec3f(0.03, 0.07, 0.08), vec3f(0.1, 0.2, 0.22), n.y * 0.5 + 0.5);
@@ -333,6 +351,11 @@ fn spots(p: vec3f, scale: f32, grow: f32, dens: f32) -> vec2f {
   return vec4f(finish(textureLoad(bgTex, vec2i(i.pos.xy), 0).rgb, i.pos.xy), 1.0);
 }
 
+fn eyeRim(rp: vec3f, id: f32) -> f32 {
+  let d = length(vec3f(rp.x + 0.29, rp.y - 0.47, abs(rp.z) - 0.23));
+  return select(0.0, exp(-pow((d - 0.1) / 0.025, 2.0)), id < 0.5);
+}
+
 fn pigment(rp: vec3f, wp: vec3f, id: f32, v: f32) -> vec4f {
   let warp = vec3f(vnoise(rp * 5.0), vnoise(rp * 5.0 + 19.1), vnoise(rp * 5.0 + 37.7)) - 0.5;
   let q = rp + warp * 0.07;
@@ -343,12 +366,14 @@ fn pigment(rp: vec3f, wp: vec3f, id: f32, v: f32) -> vec4f {
   let grow = 0.7 + 1.0 * u.look.y + 0.45 * u.look.z + 0.6 * wave;
   var dorsal = smoothstep(0.22, 0.7, rp.y);
   if (id > 1.5) { dorsal = 0.5 - 0.5 * cos(2.0 * PI * (v - 0.5)); }
-  var dens = mix(0.3, 0.88, dorsal);
-  if (id > 0.5 && id < 1.5) { dens = 0.45; }
-  let a = spots(q, 16.0, grow, dens);
-  let b = spots(q + 7.3, 7.5, grow * 0.95, dens * 0.75);
-  let dark = mix(vec3f(0.13, 0.035, 0.02), vec3f(0.36, 0.07, 0.03), a.y);
-  let warm = mix(vec3f(0.92, 0.55, 0.12), vec3f(0.78, 0.26, 0.06), b.y);
+  var dens = mix(0.45, 1.0, dorsal);
+  if (id > 0.5 && id < 1.5) { dens = 0.5; }
+  if (id > 9.5 && id < 11.5) { dens = 0.06; }
+  dens *= 1.0 - 0.8 * eyeRim(rp, id);
+  let a = spots(q, 42.0, grow * (1.0 + 0.9 * dorsal) * (0.6 + 0.8 * vnoise(rp * 9.0)), dens);
+  let b = spots(q + 7.3, 17.0, grow * 0.9, dens * 0.6);
+  let dark = mix(vec3f(0.07, 0.03, 0.025), vec3f(0.2, 0.08, 0.04), a.y);
+  let warm = mix(vec3f(0.3, 0.13, 0.05), vec3f(0.42, 0.3, 0.12), b.y);
   return vec4f(select(warm, dark, a.x > b.x * 0.8), max(a.x, b.x * 0.8));
 }
 
@@ -384,11 +409,12 @@ fn sucker(uu: f32, vv: f32, id: f32) -> vec3f {
   var pig = pigment(i.rest, i.wp, id, i.attr.z);
   pig.w *= 1.0 - suck.x;
 
+  let rim = eyeRim(i.rest, id);
   let density = u.look.x;
   let sigma = mix(vec3f(0.55, 1.3, 2.2), vec3f(0.4, 0.75, 1.15), k) * density * 3.2;
   let scat = mix(0.45, 1.9, k * k) * density;
   let wash = select(smoothstep(0.3, 0.75, i.rest.y), 0.5 - 0.5 * cos(2.0 * PI * (i.attr.z - 0.5)), id > 1.5);
-  let tissue = mix(mix(vec3f(1.0, 0.78, 0.64), vec3f(0.98, 0.86, 0.78), k) * mix(vec3f(1.0), vec3f(1.0, 0.7, 0.48), wash * 0.55), vec3f(1.0, 0.9, 0.82), suck.y * 0.7);
+  let tissue = mix(mix(mix(vec3f(0.95, 0.93, 0.92), vec3f(0.9, 0.93, 0.96), k) * mix(vec3f(1.0), vec3f(1.0, 0.9, 0.86), wash * 0.4), vec3f(1.0, 0.97, 0.95), suck.y * 0.7), vec3f(0.85, 0.6, 0.38), rim * 0.7);
   let rough = mix(0.3, 0.45, k);
 
   let rdir = refract(-V, n, 1.0 / 1.34);
@@ -479,6 +505,10 @@ slowBtn.addEventListener('click', () => {
   slowBtn.setAttribute('aria-pressed', String(sim.timeScale !== 1));
 });
 $('#reset').addEventListener('click', () => { sim.reset(); pointers.clear(); });
+$('#feed').addEventListener('click', () => {
+  const c = sim.bodyCenter(), a = Math.random() * 2 * Math.PI, r = 0.8 + Math.random() * 1.6;
+  sim.feed([c[0] + r * Math.cos(a), 0, c[2] + r * Math.sin(a)]);
+});
 
 const v3 = {
   sub: (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]],
@@ -509,7 +539,7 @@ function updateCamera(aspect) {
 
 const pointers = new Map();
 let skin = null;
-const fx = { touch: [0, -10, 0], touchT: 99, excite: 0, grabMat: -1, grabU: 0, suction: 0 };
+const fx = { touch: [0, -10, 0], touchT: 99, excite: 0, grabMat: -1, grabU: 0, suction: 0, blinkT: 9, nextBlink: 2 };
 
 function rayAt(e) {
   const r = canvas.getBoundingClientRect();
@@ -555,11 +585,11 @@ canvas.addEventListener('pointerdown', e => {
   if (hit) {
     sim.grab(e.pointerId, hit.p, hit.mat);
     pointers.set(e.pointerId, { mode: 'grab', p0: hit.p, n: camBasis.fwd });
-    fx.touch = hit.p; fx.touchT = 0; fx.excite = Math.min(1, fx.excite + 0.35);
+    fx.touch = hit.p; fx.touchT = 0; fx.excite = Math.min(1, fx.excite + 0.35); fx.blinkT = 0;
     if (hit.mat >= 2) { fx.grabMat = hit.mat; fx.grabU = hit.u; }
     canvas.classList.add('dragging');
   } else {
-    pointers.set(e.pointerId, { mode: 'orbit', x: e.clientX, y: e.clientY });
+    pointers.set(e.pointerId, { mode: 'orbit', x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t0: e.timeStamp });
   }
 });
 
@@ -585,7 +615,12 @@ canvas.addEventListener('pointermove', e => {
 });
 
 const endPointer = e => {
-  if (!pointers.has(e.pointerId)) return;
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+  if (e.type === 'pointerup' && p.mode === 'orbit' && pointers.size === 1 && e.timeStamp - p.t0 < 350 && Math.hypot(e.clientX - p.x0, e.clientY - p.y0) < 6) {
+    const q = planeHit(rayAt(e), [0, 0, 0], [0, 1, 0]);
+    if (q && Math.abs(q[0]) < TANK.x && Math.abs(q[2]) < TANK.z) sim.feed(q);
+  }
   pointers.delete(e.pointerId);
   sim.release(e.pointerId);
   if (![...pointers.values()].some(p => p.mode === 'grab')) canvas.classList.remove('dragging');
@@ -687,19 +722,24 @@ async function main() {
 
     sim.advance(dt);
     for (const ev of sim.events.splice(0)) {
+      if (ev.type === 'strike') fx.excite = Math.min(1, fx.excite + 0.3);
+      if (ev.type === 'eat') { fx.excite = 1; fx.blinkT = 0; }
       if (ev.type !== 'peel') continue;
       fx.touch = ev.pos; fx.touchT = 0; fx.excite = Math.min(1, fx.excite + 0.6);
       if (pointers.has(ev.id)) pointers.get(ev.id).mode = 'peeled';
     }
     const X = sim.interp();
-    skin.update(X, sim.bodyRotation());
+    skin.update(X, sim.bodyRotation(), sim.food);
     device.queue.writeBuffer(dynBuf, 0, skin.dyn);
 
-    const armGrab = [...sim.grabs.values()].find(g => g.kind === 'arm');
+    const userGrabs = [...sim.grabs.values()].filter(g => !g.auto), armGrab = userGrabs.find(g => g.kind === 'arm');
     fx.suction = armGrab ? Math.min(1, fx.suction + dt * 4) : Math.max(0, fx.suction - dt * 1.5);
     fx.excite = Math.max(0, fx.excite - dt * 0.5);
     fx.touchT += dt;
-    if (!sim.grabs.size && !sim.paused) {
+    fx.blinkT += dt;
+    if (sim.alive && !sim.paused && (fx.nextBlink -= dt) < 0) { fx.blinkT = 0; fx.nextBlink = 2.5 + Math.random() * 4; }
+    const blink = fx.blinkT < 0.07 ? fx.blinkT / 0.07 : Math.max(0, 1 - (fx.blinkT - 0.07) / 0.16);
+    if (!userGrabs.length && !sim.paused) {
       const c = sim.bodyCenter(X), k = Math.min(1, dt * (reduceMQ.matches ? 0.6 : 1.2));
       cam.target[0] += (Math.max(-3, Math.min(3, c[0])) - cam.target[0]) * k;
       cam.target[2] += (Math.max(-2.5, Math.min(2.5, c[2])) - cam.target[2]) * k;
@@ -712,11 +752,12 @@ async function main() {
     uni.set([...B.right, B.tanH * B.aspect], 24);
     uni.set([...B.up, B.tanH], 28);
     uni.set([...L, reduceMQ.matches ? 1 : 0], 32);
-    uni.set([1.5 - 1.25 * sim.params.clarity, sim.params.chroma, fx.excite, 1.1], 36);
+    uni.set([2.8 - 2.2 * sim.params.clarity, sim.params.chroma, fx.excite, 1.1], 36);
     uni.set([rt.w, rt.h, 1 / rt.w, 1 / rt.h], 40);
     uni.set([fx.grabMat, fx.grabU, fx.suction, 0], 44);
     uni.set([...fx.touch, fx.touchT], 48);
     uni[52] = sim.shadowSpheres(X, uni.subarray(56));
+    uni[53] = blink;
     device.queue.writeBuffer(uniBuf, 0, uni);
 
     const enc = device.createCommandEncoder();
@@ -732,7 +773,7 @@ async function main() {
     bgPass.draw(3);
     bgPass.setPipeline(objPipe);
     bgPass.setVertexBuffer(0, dynBuf); bgPass.setVertexBuffer(1, statBuf); bgPass.setIndexBuffer(idxBuf, 'uint32');
-    bgPass.drawIndexed(skin.organCount + skin.eyeCount, 1, skin.skinCount);
+    bgPass.drawIndexed(skin.organCount + skin.eyeCount + skin.foodCount, 1, skin.skinCount);
     bgPass.end();
 
     const thPass = enc.beginRenderPass({ colorAttachments: [{ view: rt.thick, loadOp: 'clear', clearValue: [0, 0, 0, 0], storeOp: 'store' }] });

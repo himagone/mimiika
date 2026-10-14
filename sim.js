@@ -4,6 +4,8 @@ export const MAX_STEPS_PER_FRAME = 4;
 export const TANK = { x: 4.4, z: 3.4, top: 3.0 };
 
 const G = -1.4, VMAX = 7, MU = 0.3, GRAB_SPEED = 9, DAMP_TAU = 0.006;
+export const MAX_FOOD = 3, FOOD_SIZE = [0.085, 0.026, 0.026];
+const REACH = 1.15, HOVER = 0.12;
 
 export const MATS = [
   { name: 'mantle', E: 30, k: 0.5 },
@@ -14,7 +16,7 @@ export const MATS = [
 ];
 const MANTLE = 0, HEAD = 1, FIN = 2, ARM = 3, TENT = 4;
 
-export const DEFAULTS = { softness: 0.5, volume: 0.8, drag: 0.45, suction: 0.6, clarity: 0.55, chroma: 0.4 };
+export const DEFAULTS = { softness: 0.5, volume: 0.8, drag: 0.45, suction: 0.6, clarity: 0.5, chroma: 0.4 };
 export const PRESETS = [
   { name: '標準', values: { ...DEFAULTS } },
   { name: 'ぷるぷる', values: { softness: 0.8, volume: 0.9, drag: 0.22, suction: 0.5, clarity: 0.75, chroma: 0.3 } },
@@ -51,6 +53,7 @@ export function mulberry32(a) {
 export const physics = p => ({ stiff: 2 ** ((0.5 - p.softness) * 4), kappa: 10 ** (p.volume * 3), drag: 0.3 * 12 ** p.drag });
 
 const BODY_Y = 0.42, X0 = 0.92, XLEN = 1.58, CROWN_S = 0.9;
+const MOUTH = [X0 - XLEN * CROWN_S - 0.05, BODY_Y - 0.04, 0];
 const PROF = [[0.22, 0.4], [0.36, 0.41], [0.48, 0.37], [0.57, 0.29], [0.63, 0.235], [0.7, 0.25], [0.78, 0.27], [0.86, 0.24], [0.9, 0.21]];
 
 export function bodyRadius(s) {
@@ -74,7 +77,6 @@ export const ORGANS = [
   { id: 22, c: [0.2, 0.3, 0.22], r: [0.15, 0.04, 0.03] },
   { id: 22, c: [0.2, 0.3, -0.22], r: [0.15, 0.04, 0.03] },
   { id: 23, c: [0.45, 0.47, 0], r: [0.19, 0.12, 0.13] },
-  { id: 24, c: [-0.28, 0.44, 0], r: [0.1, 0.09, 0.11] },
 ];
 
 const ARM_SPECS = [
@@ -229,7 +231,7 @@ function buildModel() {
 
   const eyes = [-1, 1].map(side => {
     const axis = norm([-0.3, 0.35, side]), e1 = norm(cross([0, 1, 0], axis)), e2 = cross(axis, e1);
-    return { side, c: [-0.29, 0.475, 0.245 * side], r: 0.112, frame: [e1[0], e2[0], axis[0], e1[1], e2[1], axis[1], e1[2], e2[2], axis[2]] };
+    return { side, c: [-0.29, 0.47, 0.23 * side], r: 0.1, frame: [e1[0], e2[0], axis[0], e1[1], e2[1], axis[1], e1[2], e2[2], axis[2]] };
   });
 
   return {
@@ -284,6 +286,8 @@ export class Squid {
     this.events = [];
     this._A = new Float64Array(9);
     this._R = new Float64Array(9);
+    this.c0 = [...this.regions[0].c];
+    this.rng = mulberry32(11);
     this.reset();
   }
 
@@ -295,6 +299,7 @@ export class Squid {
     this.grabs.clear();
     this.acc = 0; this.time = 0;
     for (const r of this.regions) r.q = [0, 0, 0, 1];
+    this.food = []; this.hunt = null; this.swim = null; this.cool = 0; this.prevC = null;
   }
 
   advance(realDt) {
@@ -337,12 +342,87 @@ export class Squid {
 
   release(id) { this.grabs.delete(id); }
 
+  feed(p) {
+    if (this.food.length >= MAX_FOOD) this.food.shift();
+    const m = 0.4;
+    this.food.push({ p: [clamp(p[0], -TANK.x + m, TANK.x - m), 1.5, clamp(p[2], -TANK.z + m, TANK.z - m)], yaw: 2 * PI * this.rng(), ph: 2 * PI * this.rng(), t: 0, held: false });
+  }
+
+  mouth() {
+    const R = quatToMat(this.regions[0].q, this._R), c = this.regions[0].c;
+    return { mouth: add(c, matVec(R, sub(MOUTH, this.c0))), fwd: matVec(R, [-1, 0, 0]) };
+  }
+
+  club() { return mul(add(this.centroid(this.arms[8].rings[8]), this.centroid(this.arms[9].rings[8])), 0.5); }
+
+  endHunt(cool) {
+    for (const id of ['food8', 'food9']) this.grabs.delete(id);
+    if (this.hunt) this.hunt.f.held = false;
+    this.hunt = null; this.cool = cool;
+  }
+
+  feedStep() {
+    for (const f of this.food) {
+      f.t += DT;
+      f.yaw += 0.5 * Math.sin(f.t * 1.3 + f.ph) * DT;
+      if (f.held || f.p[1] <= FOOD_SIZE[1]) continue;
+      f.p[0] += 0.08 * Math.sin(f.t * 2.1 + f.ph) * DT;
+      f.p[2] += 0.08 * Math.cos(f.t * 1.6 + f.ph) * DT;
+      f.p[1] = Math.max(FOOD_SIZE[1], f.p[1] - 0.3 * DT);
+    }
+    this.swim = null;
+    const c = this.regions[0].c, vy = this.prevC ? (c[1] - this.prevC[1]) / DT : 0;
+    this.prevC = [...c];
+    if (this.hunt && !this.food.includes(this.hunt.f)) this.endHunt(0);
+    if (!this.hunt) {
+      if ((this.cool -= DT) > 0 || !this.food.length) return;
+      const { mouth } = this.mouth();
+      const f = this.food.reduce((a, b) => (len(sub(a.p, mouth)) <= len(sub(b.p, mouth)) ? a : b));
+      this.hunt = { f, phase: 'approach', t: 0 };
+    }
+    const H = this.hunt, { mouth, fwd } = this.mouth(), to = sub(H.f.p, mouth), D = len(to);
+    H.t += DT;
+    if (H.phase === 'approach') {
+      if ([...this.grabs.values()].some(g => !g.auto)) return;
+      const dh = Math.hypot(to[0], to[2]) || 1;
+      const err = Math.atan2(fwd[2] * to[0] - fwd[0] * to[2], fwd[0] * to[0] + fwd[2] * to[2]);
+      if (D < REACH && Math.abs(err) < 0.4) {
+        for (const k of [8, 9]) {
+          this.grab(`food${k}`, this.centroid(this.arms[k].rings[8]), 2 + k);
+          Object.assign(this.grabs.get(`food${k}`), { auto: true, goal: [...H.f.p] });
+        }
+        H.phase = 'strike'; H.t = 0;
+        this.events.push({ type: 'strike', pos: [...H.f.p] });
+        return;
+      }
+      const go = Math.abs(err) < 1.2 ? clamp(1.2 * (dh - 0.75), 0, 0.7) : 0;
+      this.swim = { vx: (to[0] / dh) * go, vz: (to[2] / dh) * go, w: clamp(2.2 * err, -1.4, 1.4), c: [...c], lift: clamp(-G + 3 * (this.c0[1] + HOVER - c[1]) - 2 * vy, 0, 3) };
+      return;
+    }
+    const near = len(sub(this.club(), H.f.p));
+    if (H.phase === 'strike') {
+      for (const k of [8, 9]) this.grabs.get(`food${k}`).goal = [...H.f.p];
+      if (near < 0.16) { H.phase = 'pull'; H.t = 0; H.f.held = true; }
+      else if (H.t > 0.7) this.endHunt(0.8);
+      return;
+    }
+    H.f.p = this.club();
+    const goal = add(mouth, add(mul(fwd, 0.16), [0, -0.04, 0]));
+    for (const k of [8, 9]) Object.assign(this.grabs.get(`food${k}`), { goal, speed: 2.5 });
+    if (len(sub(H.f.p, goal)) < 0.14 || H.t > 1.6) {
+      this.food.splice(this.food.indexOf(H.f), 1);
+      this.events.push({ type: 'eat', pos: [...H.f.p] });
+      this.endHunt(1);
+    }
+  }
+
   step() {
     this.prevStep.set(this.x);
     for (const g of this.grabs.values()) {
-      const d = sub(g.goal, g.target), l = len(d), mx = GRAB_SPEED * DT;
+      const d = sub(g.goal, g.target), l = len(d), mx = (g.speed ?? GRAB_SPEED) * DT;
       g.target = l > mx ? add(g.target, mul(d, mx / l)) : [...g.goal];
     }
+    this.feedStep();
     const h = DT / SUBSTEPS;
     for (let s = 0; s < SUBSTEPS; s++) this.substep(h, this.time + s * h);
     this.time += DT;
@@ -362,8 +442,17 @@ export class Squid {
       const sp = Math.sqrt(v[i3] * v[i3] + v[i3 + 1] * v[i3 + 1] + v[i3 + 2] * v[i3 + 2]);
       if (sp > VMAX) { const s = VMAX / sp; v[i3] *= s; v[i3 + 1] *= s; v[i3 + 2] *= s; }
     }
+    if (this.swim) {
+      const { vx, vz, w, c, lift } = this.swim, a = 1 - Math.exp(-h / 0.35);
+      for (let i = 0; i < n; i++) {
+        const i3 = 3 * i, rx = x[i3] - c[0], rz = x[i3 + 2] - c[2];
+        v[i3] += (vx + w * rz - v[i3]) * a;
+        v[i3 + 2] += (vz - w * rx - v[i3 + 2]) * a;
+        v[i3 + 1] += lift * h;
+      }
+    }
     if (this.alive) {
-      const R = quatToMat(this.regions[0].q, this._R), a = 0.9 * Math.sin(2 * PI * 0.8 * t) * h;
+      const R = quatToMat(this.regions[0].q, this._R), a = (this.swim ? 2.2 : 0.9) * Math.sin(2 * PI * (this.swim ? 1.6 : 0.8) * t) * h;
       for (const f of this.fins) {
         const nn = matVec(R, f.nrm);
         for (const [i, s] of f.flap) for (let d = 0; d < 3; d++) v[3 * i + d] += nn[d] * a * s;
@@ -480,6 +569,7 @@ export class Squid {
   checkGrabs() {
     const { x } = this, P = this.params;
     for (const [id, g] of this.grabs) {
+      if (g.auto) continue;
       let lag = 0;
       g.idx.forEach((i, q) => {
         lag += g.wt[q] * Math.hypot(x[3 * i] - g.target[0] - g.off[3 * q], x[3 * i + 1] - g.target[1] - g.off[3 * q + 1], x[3 * i + 2] - g.target[2] - g.off[3 * q + 2]);
@@ -523,6 +613,7 @@ export class Squid {
     }
     for (const f of this.fins) put(this.centroid(f.flap.map(([i]) => i), X), 0.11);
     for (const A of this.arms) for (let i = 1; i < A.rings.length; i += 2) put(this.centroid(A.rings[i], X), A.rho(i / (A.rings.length - 1)) * 0.62);
+    for (const f of this.food) put(f.p, FOOD_SIZE[1] * 1.3);
     return k;
   }
 
@@ -601,7 +692,12 @@ export function buildSkin(S) {
     const l = [Math.sin(PI * u) * Math.cos(2 * PI * v), Math.sin(PI * u) * Math.sin(2 * PI * v), -Math.cos(PI * u)];
     return { p: add(E.c, matVec(E.frame, mul(l, E.r))), r: l, a: [30, E.side, 0, 0] };
   }, null);
-  const eyeCount = tris.length - skinCount - organCount, nv = pos.length / 3;
+  const eyeCount = tris.length - skinCount - organCount, foodV0 = pos.length / 3;
+  for (let k = 0; k < MAX_FOOD; k++) revolve(10, 12, (u, v) => {
+    const l = ell(u, v);
+    return { p: [l[0] * FOOD_SIZE[0], l[1] * FOOD_SIZE[1], l[2] * FOOD_SIZE[2]], r: l, a: [40, k, 0, 0] };
+  }, null);
+  const foodCount = tris.length - skinCount - organCount - eyeCount, nv = pos.length / 3;
 
   const inv = new Float64Array(12 * S.nt);
   for (let t = 0; t < S.nt; t++) {
@@ -640,7 +736,7 @@ export function buildSkin(S) {
     return s;
   };
 
-  function update(X, R) {
+  function update(X, R, food = []) {
     const T = S.tets;
     for (let v = 0; v < eyeV0; v++) {
       const t = 4 * tetOf[v], b0 = bary[4 * v], b1 = bary[4 * v + 1], b2 = bary[4 * v + 2], b3 = bary[4 * v + 3];
@@ -664,7 +760,7 @@ export function buildSkin(S) {
       const l = Math.hypot(nrm[3 * v], nrm[3 * v + 1], nrm[3 * v + 2]) || 1;
       dyn[6 * v + 3] = nrm[3 * v] / l; dyn[6 * v + 4] = nrm[3 * v + 1] / l; dyn[6 * v + 5] = nrm[3 * v + 2] / l;
     }
-    const per = (nv - eyeV0) / S.eyes.length;
+    const per = (foodV0 - eyeV0) / S.eyes.length, fper = (nv - foodV0) / MAX_FOOD;
     S.eyes.forEach((E, e) => {
       const [t, b] = eyeEmb[e], c = [0, 1, 2].map(d => at(X, t, b, d));
       for (let v = eyeV0 + e * per; v < eyeV0 + (e + 1) * per; v++) {
@@ -673,8 +769,18 @@ export function buildSkin(S) {
         for (let d = 0; d < 3; d++) { dyn[6 * v + d] = c[d] + nn[d] * E.r; dyn[6 * v + 3 + d] = nn[d]; }
       }
     });
+    for (let k = 0; k < MAX_FOOD; k++) {
+      const f = food[k], cs = f ? Math.cos(f.yaw) : 1, sn = f ? Math.sin(f.yaw) : 0;
+      for (let v = foodV0 + k * fper; v < foodV0 + (k + 1) * fper; v++) {
+        const l = eyeLocal.subarray(3 * (v - eyeV0), 3 * (v - eyeV0) + 3);
+        if (!f) { dyn.fill(0, 6 * v, 6 * v + 6); dyn[6 * v + 1] = -10; continue; }
+        const p = [l[0] * FOOD_SIZE[0], l[1] * FOOD_SIZE[1], l[2] * FOOD_SIZE[2]], nn = norm([l[0] / FOOD_SIZE[0], l[1] / FOOD_SIZE[1], l[2] / FOOD_SIZE[2]]);
+        dyn[6 * v] = f.p[0] + cs * p[0] + sn * p[2]; dyn[6 * v + 1] = f.p[1] + p[1]; dyn[6 * v + 2] = f.p[2] - sn * p[0] + cs * p[2];
+        dyn[6 * v + 3] = cs * nn[0] + sn * nn[2]; dyn[6 * v + 4] = nn[1]; dyn[6 * v + 5] = -sn * nn[0] + cs * nn[2];
+      }
+    }
     return dyn;
   }
 
-  return { nv, dyn, stat, index, skinCount, organCount, eyeCount, eyeV0, skinV, update, eyeCenter: (X, e) => [0, 1, 2].map(d => at(X, ...eyeEmb[e], d)) };
+  return { nv, dyn, stat, index, skinCount, organCount, eyeCount, foodCount, eyeV0, skinV, update, eyeCenter: (X, e) => [0, 1, 2].map(d => at(X, ...eyeEmb[e], d)) };
 }

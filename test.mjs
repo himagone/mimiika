@@ -178,6 +178,26 @@ const eyeRef = [0, 1].map(e => skin.eyeCenter(base.rest, e).map((v, d) => v - re
 }
 
 {
+  const s = new Squid(); s.x.set(base.x);
+  const drops = [[-1.6, 0, 0.2], [2.5, 0, -1.5], [-4, 0, 3]];
+  const eaten = [];
+  for (const p of drops) {
+    s.feed(p);
+    let t = 0;
+    for (; t < 20 && s.food.length; t += DT) { s.step(); intact(s, skin, `feeding ${p}`); }
+    assert.equal(s.food.length, 0, `food dropped at ${p} was not eaten`);
+    assert.ok(s.events.some(e => e.type === 'eat'), 'eating must be reported');
+    s.events.length = 0;
+    eaten.push(t.toFixed(1));
+  }
+  assert.equal(s.grabs.size, 0, 'tentacles let go after eating');
+  settle(s, skin, 'after feeding', 10);
+  const err = rms(bodyFrame(s), ref);
+  assert.ok(err < 0.02, `body shape after feeding rms=${err}`);
+  console.log(`ok  feeding: swims to food anywhere in the tank and eats it (${eaten.join('s, ')}s), then rests (rms ${err.toFixed(4)})`);
+}
+
+{
   const s = new Squid();
   s.paused = true;
   assert.equal(s.advance(0.5), 0, 'pause must not step');
