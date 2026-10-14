@@ -1,0 +1,776 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ミミイカ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #f3f0ea; --ink: #1d1b18; --mute: #6f6a62; --rule: #dcd6cb; --accent: #b4532b; --tank: #031417;
+    --display: "Shippori Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
+    --ui: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --paper: #141311; --ink: #ebe6de; --mute: #9b958b; --rule: #2d2a25; --accent: #e07c4f; }
+  }
+  :root[data-theme="dark"] { --paper: #141311; --ink: #ebe6de; --mute: #9b958b; --rule: #2d2a25; --accent: #e07c4f; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--paper); color: var(--ink); font: 14px/1.7 var(--ui); }
+  .app { display: grid; grid-template-columns: 300px 1fr; height: 100svh; }
+  .panel { padding: 36px 28px 28px; overflow-y: auto; border-right: 1px solid var(--rule); display: flex; flex-direction: column; gap: 30px; }
+  .kicker { margin: 0; font: italic 500 13px/1.4 var(--display); color: var(--mute); letter-spacing: .02em; }
+  h1 { margin: 6px 0 14px; font: 700 44px/1.1 var(--display); letter-spacing: .04em; }
+  .lede { margin: 0; color: var(--ink); }
+  h2 { margin: 0 0 12px; font: 600 11px/1 var(--ui); letter-spacing: .14em; color: var(--mute); }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  button { font: 500 13px/1 var(--ui); color: var(--ink); background: transparent; border: 1px solid var(--rule); border-radius: 2px; padding: 9px 12px; cursor: pointer; }
+  button:hover { border-color: var(--ink); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  .field { display: grid; grid-template-columns: 1fr auto; align-items: baseline; margin-bottom: 10px; }
+  .field label { font-size: 13px; }
+  .field output { font: 12px/1 var(--ui); color: var(--mute); font-variant-numeric: tabular-nums; }
+  .field input { grid-column: 1 / -1; width: 100%; margin: 6px 0 0; accent-color: var(--accent); }
+  .note { margin: 0; font-size: 12px; color: var(--mute); }
+  .stage { position: relative; background: var(--tank); min-height: 0; min-width: 0; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  canvas.dragging { cursor: grabbing; }
+  .fallback { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; color: #dfe9e8; }
+  .fallback[hidden] { display: none; }
+  .fallback div { max-width: 460px; }
+  .fallback h2 { color: #9fb7b5; }
+  .fallback p { margin: 0 0 12px; }
+  @media (max-width: 760px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: auto; height: auto; }
+    .stage { order: -1; position: sticky; top: 0; height: 60svh; z-index: 1; }
+    .panel { border-right: 0; border-top: 1px solid var(--rule); padding: 24px 16px 40px; gap: 24px; }
+    h1 { font-size: 34px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="panel">
+    <header>
+      <p class="kicker">Euprymna morsei · soft-body study</p>
+      <h1>ミミイカ</h1>
+      <p class="lede">外套膜をつかんで離すと、体はしばらく揺れてから落ち着きます。腕の吸盤にふれると吸い付き、引っ張ると腕が伸びます。</p>
+    </header>
+    <section aria-labelledby="h-preset">
+      <h2 id="h-preset">個体</h2>
+      <div class="row" id="presets"></div>
+    </section>
+    <section aria-labelledby="h-params">
+      <h2 id="h-params">性質</h2>
+      <div id="sliders"></div>
+    </section>
+    <section aria-labelledby="h-time">
+      <h2 id="h-time">時間</h2>
+      <div class="row">
+        <button id="pause" aria-pressed="false">一時停止</button>
+        <button id="slow" aria-pressed="false">スロー</button>
+        <button id="reset">リセット</button>
+      </div>
+    </section>
+    <p class="note">何もない場所をドラッグすると視点を回せます。ホイールまたは2本指で拡大と縮小ができます。</p>
+    <p class="note" id="stats"></p>
+  </aside>
+  <main class="stage">
+    <canvas id="gpu" role="img" aria-label="水槽の底にいる半透明のミミイカ。ドラッグでつかめます。"></canvas>
+    <div class="fallback" id="fallback" hidden>
+      <div>
+        <h2>WEBGPU を利用できません</h2>
+        <p>このページはWebGPUとWGSLシェーダーでイカを描画します。代わりの描画方式は用意していないため、このブラウザでは表示できません。</p>
+        <p>Chrome または Edge の 113 以降、Safari 26 以降で開いてください。ページは https または localhost で配信する必要があります。</p>
+        <p class="reason"></p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script type="module">
+import { Squid, buildSkin, PRESETS, TANK } from './sim.js';
+
+const WGSL = /* wgsl */ `
+struct U {
+  viewProj: mat4x4f,
+  camPos: vec4f,
+  camFwd: vec4f,
+  camRight: vec4f,
+  camUp: vec4f,
+  light: vec4f,
+  look: vec4f,
+  screen: vec4f,
+  grab: vec4f,
+  touch: vec4f,
+  misc: vec4f,
+  spheres: array<vec4f, 96>,
+};
+@group(0) @binding(0) var<uniform> u: U;
+@group(1) @binding(0) var bgTex: texture_2d<f32>;
+@group(1) @binding(1) var bgLin: texture_2d<f32>;
+@group(1) @binding(2) var thickTex: texture_2d<f32>;
+@group(1) @binding(3) var samp: sampler;
+
+const PI = 3.14159265;
+const TANK = vec3f(${TANK.x}, ${TANK.top}, ${TANK.z});
+const SUN = vec3f(1.0, 0.95, 0.86) * 2.5;
+
+struct VO { @builtin(position) pos: vec4f, @location(0) wp: vec3f, @location(1) n: vec3f, @location(2) rest: vec3f, @location(3) attr: vec4f };
+struct FO { @builtin(position) pos: vec4f, @location(0) ndc: vec2f };
+struct BgOut { @location(0) color: vec4f, @location(1) lin: vec4f, @builtin(frag_depth) depth: f32 };
+struct ObjOut { @location(0) color: vec4f, @location(1) lin: vec4f };
+
+@vertex fn vsMesh(@location(0) p: vec3f, @location(1) n: vec3f, @location(2) r: vec3f, @location(3) a: vec4f) -> VO {
+  var o: VO;
+  o.pos = u.viewProj * vec4f(p, 1.0);
+  o.wp = p; o.n = n; o.rest = r; o.attr = a;
+  return o;
+}
+
+@vertex fn vsFull(@builtin(vertex_index) vi: u32) -> FO {
+  let xy = vec2f(f32((vi << 1u) & 2u), f32(vi & 2u)) * 2.0 - 1.0;
+  var o: FO;
+  o.pos = vec4f(xy, 0.0, 1.0);
+  o.ndc = xy;
+  return o;
+}
+
+fn hash33(q: vec3f) -> vec3f {
+  var p = fract(q * vec3f(0.1031, 0.1030, 0.0973));
+  p += dot(p, p.yxz + 33.33);
+  return fract((p.xxy + p.yxx) * p.zyx);
+}
+
+fn vnoise(p: vec3f) -> f32 {
+  let i = floor(p); let f = fract(p); let s = f * f * (3.0 - 2.0 * f);
+  let a = hash33(i).x; let b = hash33(i + vec3f(1.0, 0.0, 0.0)).x;
+  let c = hash33(i + vec3f(0.0, 1.0, 0.0)).x; let d = hash33(i + vec3f(1.0, 1.0, 0.0)).x;
+  let e = hash33(i + vec3f(0.0, 0.0, 1.0)).x; let g = hash33(i + vec3f(1.0, 0.0, 1.0)).x;
+  let h = hash33(i + vec3f(0.0, 1.0, 1.0)).x; let k = hash33(i + vec3f(1.0, 1.0, 1.0)).x;
+  return mix(mix(mix(a, b, s.x), mix(c, d, s.x), s.y), mix(mix(e, g, s.x), mix(h, k, s.x), s.y), s.z);
+}
+
+fn caustic(p: vec3f) -> f32 {
+  let t = select(u.camPos.w * 0.35, 0.0, u.light.w > 0.5) + 23.0;
+  let L = normalize(u.light.xyz);
+  let qq = (p.xz - L.xz / L.y * p.y) * 1.2;
+  let q = qq - 6.2831853 * floor(qq / 6.2831853) - 250.0;
+  var w = q;
+  var c = 1.0;
+  for (var n = 0; n < 5; n++) {
+    let tt = t * (1.0 - 3.5 / f32(n + 1));
+    w = q + vec2f(cos(tt - w.x) + sin(tt + w.y), sin(tt - w.y) + cos(tt + w.x));
+    c += 1.0 / length(vec2f(q.x / (sin(w.x + tt) / 0.005), q.y / (cos(w.y + tt) / 0.005)));
+  }
+  c = 1.17 - pow(c / 5.0, 1.4);
+  return clamp(pow(abs(c), 8.0) * 1.4, 0.0, 1.8) * (0.6 + 0.4 * vnoise(vec3f(qq * 0.4, 2.0)));
+}
+
+fn occluders(p: vec3f, n: vec3f, L: vec3f) -> vec2f {
+  var occ = 0.0; var ao = 0.0;
+  let cnt = i32(u.misc.x);
+  for (var k = 0; k < cnt; k++) {
+    let s = u.spheres[k];
+    let d = s.xyz - p; let r = s.w;
+    let t = dot(d, L);
+    if (t > 0.0) {
+      let h = length(d - L * t);
+      let pen = r * 0.3 + t * 0.28;
+      occ = max(occ, 1.0 - smoothstep(r - pen, r + pen, h));
+    }
+    let dl = max(length(d), r * 1.01);
+    ao += clamp(dot(n, d / dl), 0.0, 1.0) * r * r / (dl * dl);
+  }
+  return vec2f(1.0 - occ * 0.7, 1.0 - clamp(ao * 0.9, 0.0, 0.85));
+}
+
+fn waterFog(rd: vec3f) -> vec3f {
+  return mix(vec3f(0.004, 0.02, 0.026), vec3f(0.03, 0.1, 0.12), smoothstep(-0.4, 0.7, rd.y));
+}
+
+fn envLight(r: vec3f) -> vec3f {
+  return mix(vec3f(0.01, 0.035, 0.045), vec3f(0.11, 0.24, 0.27), smoothstep(-0.3, 0.6, r.y)) + vec3f(0.45, 0.58, 0.56) * pow(max(r.y, 0.0), 6.0);
+}
+
+fn ggx(n: vec3f, v: vec3f, l: vec3f, rough: f32, f0: f32) -> f32 {
+  let h = normalize(v + l);
+  let nl = max(dot(n, l), 0.0); let nv = max(dot(n, v), 1e-3); let nh = max(dot(n, h), 0.0);
+  let a = rough * rough; let a2 = a * a;
+  let dd = nh * nh * (a2 - 1.0) + 1.0;
+  let k = a * 0.5;
+  let g = nl / (nl * (1.0 - k) + k) * nv / (nv * (1.0 - k) + k);
+  let f = f0 + (1.0 - f0) * pow(1.0 - max(dot(h, v), 0.0), 5.0);
+  return a2 / (PI * dd * dd) * g * f / (4.0 * nv);
+}
+
+fn finish(c: vec3f, px: vec2f) -> vec3f {
+  let x = max(c * u.look.w, vec3f(0.0));
+  let m = max(max(x.r, x.g), x.b);
+  let tm = m * (1.0 + m / 9.0) / (1.0 + m);
+  var o = x * (tm / max(m, 1e-5));
+  let l = dot(o, vec3f(0.2126, 0.7152, 0.0722));
+  o = mix(vec3f(l), o, 1.06);
+  return pow(clamp(o, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2)) + (hash33(vec3f(px, 1.0)).x - 0.5) / 255.0;
+}
+
+fn sandHeight(p: vec2f) -> f32 {
+  return sin(dot(p, vec2f(5.3, 1.9)) + vnoise(vec3f(p * 1.3, 0.0)) * 4.0) * 0.006 + vnoise(vec3f(p * 22.0, 1.0)) * 0.002;
+}
+
+@fragment fn fsEnv(i: FO) -> BgOut {
+  let ro = u.camPos.xyz;
+  let rd = normalize(u.camFwd.xyz + i.ndc.x * u.camRight.w * u.camRight.xyz + i.ndc.y * u.camUp.w * u.camUp.xyz);
+  var t = 1e5; var kind = 2;
+  if (rd.y < -1e-4) { t = -ro.y / rd.y; kind = 0; } else if (rd.y > 1e-4) { t = (TANK.y - ro.y) / rd.y; kind = 1; }
+  if (abs(rd.x) > 1e-4) { let tx = (sign(rd.x) * TANK.x - ro.x) / rd.x; if (tx < t) { t = tx; kind = 2; } }
+  if (abs(rd.z) > 1e-4) { let tz = (sign(rd.z) * TANK.z - ro.z) / rd.z; if (tz < t) { t = tz; kind = 2; } }
+  let p = ro + rd * t;
+  let L = normalize(u.light.xyz);
+  var col: vec3f;
+  if (kind == 0) {
+    let e = 0.01;
+    let h0 = sandHeight(p.xz);
+    let n = normalize(vec3f(-(sandHeight(p.xz + vec2f(e, 0.0)) - h0) / e, 1.0, -(sandHeight(p.xz + vec2f(0.0, e)) - h0) / e));
+    let albedo = vec3f(0.4, 0.345, 0.27) * (0.78 + 0.3 * vnoise(vec3f(p.xz * 3.0, 5.0))) * (0.82 + 0.3 * vnoise(vec3f(p.xz * 60.0, 2.0)));
+    let sh = occluders(p, vec3f(0.0, 1.0, 0.0), L);
+    let direct = SUN * max(dot(n, L), 0.0) * (0.25 + 1.1 * caustic(p)) * sh.x;
+    col = albedo * (direct + vec3f(0.05, 0.13, 0.15) * sh.y);
+  } else if (kind == 1) {
+    col = vec3f(0.16, 0.32, 0.34) * (0.5 + caustic(p * 0.7));
+  } else {
+    col = vec3f(0.012, 0.045, 0.05) * (0.6 + 0.8 * caustic(p)) + vec3f(0.05, 0.045, 0.035) * (1.0 - smoothstep(0.0, 0.2, p.y));
+  }
+  col = mix(col, waterFog(rd), 1.0 - exp(-t * 0.16));
+  let clip = u.viewProj * vec4f(p, 1.0);
+  var o: BgOut;
+  o.color = vec4f(col, 1.0);
+  o.lin = vec4f(t * dot(rd, u.camFwd.xyz), 0.0, 0.0, 0.0);
+  o.depth = clamp(clip.z / clip.w, 0.0, 1.0);
+  return o;
+}
+
+fn spots(p: vec3f, scale: f32, grow: f32, dens: f32) -> vec2f {
+  let q = p * scale; let i = floor(q); let f = fract(q);
+  var cov = 0.0; var tone = 0.0;
+  for (var z = -1; z <= 1; z++) {
+    for (var y = -1; y <= 1; y++) {
+      for (var x = -1; x <= 1; x++) {
+        let g = vec3f(f32(x), f32(y), f32(z));
+        let h = hash33(i + g);
+        if (h.z < dens) {
+          let c = g + 0.15 + 0.7 * hash33(i + g + 17.0) - f;
+          let r = (0.14 + 0.2 * h.x) * grow;
+          let m = 1.0 - smoothstep(r * 0.55, r, length(c));
+          if (m > cov) { cov = m; tone = h.y; }
+        }
+      }
+    }
+  }
+  return vec2f(cov, tone);
+}
+
+@fragment fn fsObj(i: VO) -> ObjOut {
+  let id = i.attr.x;
+  let n = normalize(i.n);
+  let V = normalize(u.camPos.xyz - i.wp);
+  let L = normalize(u.light.xyz);
+  let lp = i.rest;
+  let NdV = max(dot(n, V), 1e-3);
+  let t = select(u.camPos.w, 0.0, u.light.w > 0.5);
+  var base = vec3f(0.6); var rough = 0.5; var f0 = 0.03; var emit = vec3f(0.0); var wrap = 0.5; var inside = 0.32;
+  if (id < 20.5) {
+    let film = 0.5 + 0.5 * cos(6.2831 * (vec3f(0.0, 0.33, 0.67) + NdV * 1.3 + 0.15));
+    base = vec3f(0.02, 0.016, 0.02) + film * 0.05;
+    rough = 0.3; f0 = 0.18;
+  } else if (id < 21.5) {
+    base = vec3f(0.32, 0.4, 0.38);
+    emit = vec3f(0.06, 0.42, 0.38) * (0.22 + 0.08 * sin(t * 1.3)) * (0.6 + 0.4 * lp.y);
+    rough = 0.25; f0 = 0.08;
+  } else if (id < 22.5) {
+    base = mix(vec3f(0.42, 0.22, 0.2), vec3f(0.6, 0.42, 0.36), 0.5 + 0.5 * sin(lp.x * 42.0) * vnoise(lp * 5.0));
+  } else if (id < 23.5) {
+    base = mix(vec3f(0.26, 0.09, 0.03), vec3f(0.5, 0.24, 0.07), vnoise(lp * 6.0));
+    rough = 0.4;
+  } else if (id < 24.5) {
+    base = vec3f(0.62, 0.64, 0.66);
+    wrap = 0.9;
+  } else {
+    let c = lp.z;
+    let ang = atan2(lp.y, lp.x);
+    let pupil = smoothstep(0.86, 0.9, c);
+    let iris = smoothstep(0.6, 0.68, c) * (1.0 - pupil);
+    let stri = 0.5 + 0.5 * sin(ang * 22.0 + vnoise(lp * 8.0) * 3.0);
+    let irisCol = mix(vec3f(0.5, 0.36, 0.12), vec3f(0.22, 0.34, 0.3), stri * 0.35 + 0.3 * (c - 0.6) / 0.26) * 0.8;
+    let speck = spots(lp, 7.0, 1.1, 0.55).x;
+    let sclera = vec3f(0.3, 0.32, 0.34) * (0.7 + 0.3 * vnoise(lp * 14.0)) * (1.0 - speck * 0.75);
+    base = mix(mix(sclera, irisCol, iris), vec3f(0.005, 0.007, 0.012), pupil);
+    rough = 0.07; f0 = 0.05; wrap = 0.1; inside = 0.85;
+  }
+  let sun = SUN * (0.45 + 0.9 * caustic(i.wp)) * inside;
+  let amb = mix(vec3f(0.03, 0.07, 0.08), vec3f(0.1, 0.2, 0.22), n.y * 0.5 + 0.5);
+  let diff = max((dot(n, L) + wrap) / (1.0 + wrap), 0.0);
+  let F = f0 + (1.0 - f0) * pow(1.0 - NdV, 5.0);
+  var col = base * (sun * diff + amb) * (1.0 - F) + emit;
+  col += sun * ggx(n, V, L, rough, f0) + envLight(reflect(-V, n)) * F;
+  let dist = length(i.wp - u.camPos.xyz);
+  col = mix(col, waterFog(-V), 1.0 - exp(-dist * 0.11));
+  var o: ObjOut;
+  o.color = vec4f(col, 1.0);
+  o.lin = vec4f(dot(i.wp - u.camPos.xyz, u.camFwd.xyz), 0.0, 0.0, 0.0);
+  return o;
+}
+
+@fragment fn fsThick(i: VO, @builtin(front_facing) ff: bool) -> @location(0) vec4f {
+  let d = dot(i.wp - u.camPos.xyz, u.camFwd.xyz) - u.camFwd.w;
+  return vec4f(select(d, -d, ff), 0.0, 0.0, 0.0);
+}
+
+@fragment fn fsBlit(i: FO) -> @location(0) vec4f {
+  return vec4f(finish(textureLoad(bgTex, vec2i(i.pos.xy), 0).rgb, i.pos.xy), 1.0);
+}
+
+fn pigment(rp: vec3f, wp: vec3f, id: f32, v: f32) -> vec4f {
+  let warp = vec3f(vnoise(rp * 5.0), vnoise(rp * 5.0 + 19.1), vnoise(rp * 5.0 + 37.7)) - 0.5;
+  let q = rp + warp * 0.07;
+  let dist = length(wp - u.touch.xyz);
+  let since = u.touch.w;
+  var wave = exp(-dist * 2.5) * exp(-since * 1.4);
+  if (u.light.w < 0.5) { wave = exp(-pow((dist - since * 0.8) * 5.0, 2.0)) * exp(-since * 0.9); }
+  let grow = 0.7 + 1.0 * u.look.y + 0.45 * u.look.z + 0.6 * wave;
+  var dorsal = smoothstep(0.22, 0.7, rp.y);
+  if (id > 1.5) { dorsal = 0.5 - 0.5 * cos(2.0 * PI * (v - 0.5)); }
+  var dens = mix(0.3, 0.88, dorsal);
+  if (id > 0.5 && id < 1.5) { dens = 0.45; }
+  let a = spots(q, 16.0, grow, dens);
+  let b = spots(q + 7.3, 7.5, grow * 0.95, dens * 0.75);
+  let dark = mix(vec3f(0.13, 0.035, 0.02), vec3f(0.36, 0.07, 0.03), a.y);
+  let warm = mix(vec3f(0.92, 0.55, 0.12), vec3f(0.78, 0.26, 0.06), b.y);
+  return vec4f(select(warm, dark, a.x > b.x * 0.8), max(a.x, b.x * 0.8));
+}
+
+fn sucker(uu: f32, vv: f32, id: f32) -> vec3f {
+  let tent = id > 9.5;
+  if ((tent && uu < 0.68) || uu < 0.07 || uu > 0.97) { return vec3f(0.0); }
+  let n = select(30.0, 46.0, tent);
+  let taper = select(1.0 - 0.78 * uu, 0.6, tent);
+  let side = select(-1.0, 1.0, vv > 0.5);
+  let du = fract(uu * n + select(0.0, 0.5, side > 0.0)) - 0.5;
+  let dv = (vv - 0.5 - side * 0.3 / (14.6 * taper)) * 14.6 * taper;
+  let d = length(vec2f(du, dv));
+  let disc = 1.0 - smoothstep(0.3, 0.38, d);
+  return vec3f(disc, disc * smoothstep(0.16, 0.28, d), 1.0 - smoothstep(0.08, 0.17, d));
+}
+
+@fragment fn fsSkin(i: VO) -> @location(0) vec4f {
+  let id = i.attr.x;
+  let k = i.attr.w;
+  let n = normalize(i.n);
+  let V = normalize(u.camPos.xyz - i.wp);
+  let L = normalize(u.light.xyz);
+  let px = vec2i(i.pos.xy);
+  let frontLin = dot(i.wp - u.camPos.xyz, u.camFwd.xyz);
+  let thick = clamp(textureLoad(thickTex, px, 0).r, 0.0, 2.0);
+
+  var suck = vec3f(0.0);
+  var held = 0.0;
+  if (id > 1.5) {
+    suck = sucker(i.attr.y, i.attr.z, id);
+    held = u.grab.z * step(abs(id - u.grab.x), 0.5) * (1.0 - smoothstep(0.04, 0.16, abs(i.attr.y - u.grab.y)));
+  }
+  var pig = pigment(i.rest, i.wp, id, i.attr.z);
+  pig.w *= 1.0 - suck.x;
+
+  let density = u.look.x;
+  let sigma = mix(vec3f(0.55, 1.3, 2.2), vec3f(0.4, 0.75, 1.15), k) * density * 3.2;
+  let scat = mix(0.45, 1.9, k * k) * density;
+  let wash = select(smoothstep(0.3, 0.75, i.rest.y), 0.5 - 0.5 * cos(2.0 * PI * (i.attr.z - 0.5)), id > 1.5);
+  let tissue = mix(mix(vec3f(1.0, 0.78, 0.64), vec3f(0.98, 0.86, 0.78), k) * mix(vec3f(1.0), vec3f(1.0, 0.7, 0.48), wash * 0.55), vec3f(1.0, 0.9, 0.82), suck.y * 0.7);
+  let rough = mix(0.3, 0.45, k);
+
+  let rdir = refract(-V, n, 1.0 / 1.34);
+  let clip = u.viewProj * vec4f(i.wp + rdir * clamp(thick, 0.02, 0.6) * 0.9, 1.0);
+  var suv = clamp(clip.xy / clip.w * vec2f(0.5, -0.5) + 0.5, vec2f(0.001), vec2f(0.999));
+  var bgL = textureLoad(bgLin, vec2i(suv * u.screen.xy), 0).r;
+  if (bgL < frontLin) { suv = i.pos.xy * u.screen.zw; bgL = textureLoad(bgLin, px, 0).r; }
+  let bg = textureSampleLevel(bgTex, samp, suv, 0.0).rgb;
+  let path = clamp(min(thick, bgL - frontLin), 0.0, 2.0);
+
+  let NdV = max(dot(n, V), 1e-3);
+  let F = min(0.025 + 0.975 * pow(1.0 - NdV, 5.0), 0.45);
+  let Tr = exp(-sigma * path);
+  let filt = mix(vec3f(1.0), pig.rgb, pig.w * 0.92);
+  let trans = bg * Tr * filt * (1.0 - F);
+
+  let sun = SUN * (0.5 + 0.9 * caustic(i.wp));
+  let amb = mix(vec3f(0.02, 0.06, 0.07), vec3f(0.11, 0.22, 0.25), n.y * 0.5 + 0.5);
+  let NdL = dot(n, L);
+  let wrapD = max((NdL + 0.6) / 1.6, 0.0);
+  let haze = 1.0 - exp(-scat * (thick + mix(0.12, 0.24, k)));
+  let tint = mix(vec3f(1.0), pig.rgb * 1.2, pig.w * 0.55);
+  var surf = tissue * tint * (sun * wrapD * 0.5 + amb * 1.5) * haze * 0.5 * (1.0 - F);
+  let through = exp(-sigma * thick * 0.7) * (0.3 + 0.7 * pow(max(dot(V, -L), 0.0), 2.0));
+  surf += sun * tissue * tint * through * max(0.0, 0.3 - NdL * 0.7) * 0.6;
+  surf += pig.rgb * pig.w * (sun * max(NdL, 0.0) * 0.3 + amb * 0.9) * 0.6;
+  surf *= 1.0 - suck.z * (0.3 + 0.45 * held);
+  surf += vec3f(0.5, 0.07, 0.05) * held * suck.x * 0.3;
+  let iridMask = select(0.0, smoothstep(0.6, 0.76, i.attr.y), id < 0.5) + select(0.0, 0.5, id > 1.5) * (1.0 - suck.x);
+  surf += (0.5 + 0.5 * cos(6.2831 * (vec3f(0.0, 0.33, 0.67) + NdV * 1.6 + 0.25))) * iridMask * 0.05 * (1.0 - NdV) * (1.0 - pig.w);
+  surf += sun * ggx(n, V, L, rough, 0.028) * (1.0 + suck.y * 0.5);
+  surf += envLight(reflect(-V, n)) * F * 0.9 + tissue * amb * pow(1.0 - NdV, 2.0) * 0.6;
+  let fog = 1.0 - exp(-length(i.wp - u.camPos.xyz) * 0.11);
+  let col = trans + surf * (1.0 - fog) + waterFog(-V) * fog * (1.0 - dot(Tr * filt, vec3f(1.0 / 3.0)));
+  return vec4f(finish(col, i.pos.xy), 1.0);
+}
+`;
+
+const $ = s => document.querySelector(s);
+const canvas = $('#gpu');
+function fail(reason) {
+  $('#fallback').hidden = false;
+  $('#fallback .reason').textContent = reason;
+  canvas.hidden = true;
+}
+
+const sim = new Squid();
+const reduceMQ = matchMedia('(prefers-reduced-motion: reduce)');
+const applyMotionPref = () => { sim.alive = !reduceMQ.matches; };
+applyMotionPref();
+reduceMQ.addEventListener('change', applyMotionPref);
+
+const SLIDERS = [
+  ['softness', 'やわらかさ'], ['volume', '体積の保持'], ['drag', '水の抵抗'],
+  ['suction', '吸盤の吸着'], ['clarity', '透明感'], ['chroma', '色素胞の広がり'],
+];
+const inputs = {};
+for (const [key, label] of SLIDERS) {
+  const wrap = document.createElement('div');
+  wrap.className = 'field';
+  wrap.innerHTML = `<label for="s-${key}">${label}</label><output id="o-${key}" for="s-${key}"></output><input id="s-${key}" type="range" min="0" max="1" step="0.01">`;
+  $('#sliders').append(wrap);
+  const input = wrap.querySelector('input'), out = wrap.querySelector('output');
+  inputs[key] = { input, out };
+  input.addEventListener('input', () => { sim.params[key] = +input.value; out.value = Math.round(input.value * 100); markPreset(null); });
+}
+const syncSliders = () => { for (const [key, { input, out }] of Object.entries(inputs)) { input.value = sim.params[key]; out.value = Math.round(sim.params[key] * 100); } };
+const presetButtons = PRESETS.map(p => {
+  const b = document.createElement('button');
+  b.textContent = p.name;
+  b.setAttribute('aria-pressed', 'false');
+  b.addEventListener('click', () => { Object.assign(sim.params, p.values); syncSliders(); markPreset(b); });
+  $('#presets').append(b);
+  return b;
+});
+function markPreset(active) { for (const b of presetButtons) b.setAttribute('aria-pressed', String(b === active)); }
+syncSliders();
+markPreset(presetButtons[0]);
+
+const pauseBtn = $('#pause'), slowBtn = $('#slow');
+pauseBtn.addEventListener('click', () => {
+  sim.paused = !sim.paused;
+  pauseBtn.setAttribute('aria-pressed', String(sim.paused));
+  pauseBtn.textContent = sim.paused ? '再開' : '一時停止';
+});
+slowBtn.addEventListener('click', () => {
+  sim.timeScale = sim.timeScale === 1 ? 0.25 : 1;
+  slowBtn.setAttribute('aria-pressed', String(sim.timeScale !== 1));
+});
+$('#reset').addEventListener('click', () => { sim.reset(); pointers.clear(); });
+
+const v3 = {
+  sub: (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]],
+  add: (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
+  mul: (a, s) => [a[0] * s, a[1] * s, a[2] * s],
+  dot: (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2],
+  cross: (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]],
+  norm: a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; },
+};
+
+const cam = { yaw: -0.75, pitch: 0.42, dist: 3.5, target: [0.05, 0.3, 0], fov: 38 * Math.PI / 180 };
+let camBasis = null;
+function updateCamera(aspect) {
+  const fit = Math.max(1, 1.25 / aspect) ** 0.8;
+  const d = cam.dist * fit, cp = Math.cos(cam.pitch);
+  const eye = v3.add(cam.target, [d * cp * Math.sin(cam.yaw), d * Math.sin(cam.pitch), d * cp * Math.cos(cam.yaw)]);
+  const fwd = v3.norm(v3.sub(cam.target, eye));
+  const right = v3.norm(v3.cross(fwd, [0, 1, 0]));
+  const up = v3.cross(right, fwd);
+  const tanH = Math.tan(cam.fov / 2), near = 0.05, far = 40, f = 1 / tanH;
+  const P = [f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, far / (near - far), -1, 0, 0, (near * far) / (near - far), 0];
+  const z = v3.mul(fwd, -1);
+  const Vw = [right[0], up[0], z[0], 0, right[1], up[1], z[1], 0, right[2], up[2], z[2], 0, -v3.dot(right, eye), -v3.dot(up, eye), -v3.dot(z, eye), 1];
+  const VP = new Array(16);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) { let s = 0; for (let k = 0; k < 4; k++) s += P[k * 4 + r] * Vw[c * 4 + k]; VP[c * 4 + r] = s; }
+  camBasis = { eye, fwd, right, up, tanH, aspect, VP, ref: d };
+}
+
+const pointers = new Map();
+let skin = null;
+const fx = { touch: [0, -10, 0], touchT: 99, excite: 0, grabMat: -1, grabU: 0, suction: 0 };
+
+function rayAt(e) {
+  const r = canvas.getBoundingClientRect();
+  const nx = ((e.clientX - r.left) / r.width) * 2 - 1, ny = 1 - ((e.clientY - r.top) / r.height) * 2;
+  const { eye, fwd, right, up, tanH, aspect } = camBasis;
+  return { o: eye, d: v3.norm(v3.add(fwd, v3.add(v3.mul(right, nx * tanH * aspect), v3.mul(up, ny * tanH)))) };
+}
+
+function pick(ray) {
+  const P = skin.dyn, I = skin.index, [ox, oy, oz] = ray.o, [dx, dy, dz] = ray.d;
+  let best = Infinity, tri = -1;
+  for (let t = 0; t < skin.skinCount; t += 3) {
+    const a = 6 * I[t], b = 6 * I[t + 1], c = 6 * I[t + 2];
+    const e1x = P[b] - P[a], e1y = P[b + 1] - P[a + 1], e1z = P[b + 2] - P[a + 2];
+    const e2x = P[c] - P[a], e2y = P[c + 1] - P[a + 1], e2z = P[c + 2] - P[a + 2];
+    const px = dy * e2z - dz * e2y, py = dz * e2x - dx * e2z, pz = dx * e2y - dy * e2x;
+    const det = e1x * px + e1y * py + e1z * pz;
+    if (Math.abs(det) < 1e-12) continue;
+    const inv = 1 / det, tx = ox - P[a], ty = oy - P[a + 1], tz = oz - P[a + 2];
+    const uu = (tx * px + ty * py + tz * pz) * inv;
+    if (uu < 0 || uu > 1) continue;
+    const qx = ty * e1z - tz * e1y, qy = tz * e1x - tx * e1z, qz = tx * e1y - ty * e1x;
+    const vv = (dx * qx + dy * qy + dz * qz) * inv;
+    if (vv < 0 || uu + vv > 1) continue;
+    const d = (e2x * qx + e2y * qy + e2z * qz) * inv;
+    if (d > 0 && d < best) { best = d; tri = t; }
+  }
+  if (tri < 0) return null;
+  const v = skin.index[tri];
+  return { p: v3.add(ray.o, v3.mul(ray.d, best)), mat: Math.round(skin.stat[7 * v + 3]), u: skin.stat[7 * v + 4] };
+}
+
+function planeHit(ray, p0, n) {
+  const den = v3.dot(ray.d, n);
+  if (Math.abs(den) < 1e-5) return null;
+  return v3.add(ray.o, v3.mul(ray.d, v3.dot(v3.sub(p0, ray.o), n) / den));
+}
+
+canvas.addEventListener('pointerdown', e => {
+  if (!skin || !camBasis) return;
+  canvas.setPointerCapture(e.pointerId);
+  const ray = rayAt(e), hit = pick(ray);
+  if (hit) {
+    sim.grab(e.pointerId, hit.p, hit.mat);
+    pointers.set(e.pointerId, { mode: 'grab', p0: hit.p, n: camBasis.fwd });
+    fx.touch = hit.p; fx.touchT = 0; fx.excite = Math.min(1, fx.excite + 0.35);
+    if (hit.mat >= 2) { fx.grabMat = hit.mat; fx.grabU = hit.u; }
+    canvas.classList.add('dragging');
+  } else {
+    pointers.set(e.pointerId, { mode: 'orbit', x: e.clientX, y: e.clientY });
+  }
+});
+
+canvas.addEventListener('pointermove', e => {
+  const p = pointers.get(e.pointerId);
+  if (!p || p.mode === 'peeled') return;
+  if (p.mode === 'grab') {
+    const q = planeHit(rayAt(e), p.p0, p.n);
+    if (q) sim.moveGrab(e.pointerId, q);
+    return;
+  }
+  const orbiters = [...pointers.values()].filter(o => o.mode === 'orbit');
+  if (orbiters.length >= 2) {
+    const [a, b] = orbiters, before = Math.hypot(a.x - b.x, a.y - b.y);
+    p.x = e.clientX; p.y = e.clientY;
+    const after = Math.hypot(a.x - b.x, a.y - b.y);
+    if (before > 0 && after > 0) cam.dist = Math.min(7, Math.max(1.6, cam.dist * before / after));
+    return;
+  }
+  cam.yaw -= (e.clientX - p.x) * 0.006;
+  cam.pitch = Math.min(1.35, Math.max(0.06, cam.pitch + (e.clientY - p.y) * 0.005));
+  p.x = e.clientX; p.y = e.clientY;
+});
+
+const endPointer = e => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.delete(e.pointerId);
+  sim.release(e.pointerId);
+  if (![...pointers.values()].some(p => p.mode === 'grab')) canvas.classList.remove('dragging');
+};
+for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(type, endPointer);
+canvas.addEventListener('wheel', e => { e.preventDefault(); cam.dist = Math.min(7, Math.max(1.6, cam.dist * Math.exp(e.deltaY * 0.001))); }, { passive: false });
+
+async function main() {
+  if (!('gpu' in navigator)) return fail('検出結果は「navigator.gpu が存在しない」です。');
+  let adapter = null;
+  try { adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }); } catch (err) { console.error(err); }
+  if (!adapter) return fail('検出結果は「GPU アダプターを取得できない」です。');
+  const device = await adapter.requestDevice();
+  device.lost.then(info => { if (info.reason !== 'destroyed') fail(`GPU デバイスが失われました。${info.message}`); });
+  device.addEventListener('uncapturederror', e => console.error('[mimiika] GPU error:', e.error.message));
+
+  const module = device.createShaderModule({ code: WGSL });
+  const info = await module.getCompilationInfo();
+  const errors = info.messages.filter(m => m.type === 'error');
+  if (errors.length) {
+    console.error(errors.map(m => `WGSL ${m.lineNum}:${m.linePos} ${m.message}`).join('\n'));
+    return fail('シェーダーのコンパイルに失敗しました。');
+  }
+
+  const ctx = canvas.getContext('webgpu');
+  const format = navigator.gpu.getPreferredCanvasFormat();
+  ctx.configure({ device, format, alphaMode: 'opaque' });
+
+  skin = buildSkin(sim);
+  $('#stats').textContent = `粒子 ${sim.n} 個、四面体 ${sim.nt} 個、辺 ${sim.ne} 本。1/60 秒の固定ステップを 12 サブステップで解いています。`;
+
+  const VS = GPUShaderStage.VERTEX, FS = GPUShaderStage.FRAGMENT;
+  const bgl0 = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: VS | FS, buffer: {} }] });
+  const bgl1 = device.createBindGroupLayout({ entries: [
+    { binding: 0, visibility: FS, texture: { sampleType: 'float' } },
+    { binding: 1, visibility: FS, texture: { sampleType: 'unfilterable-float' } },
+    { binding: 2, visibility: FS, texture: { sampleType: 'float' } },
+    { binding: 3, visibility: FS, sampler: { type: 'filtering' } },
+  ] });
+  const layA = device.createPipelineLayout({ bindGroupLayouts: [bgl0] });
+  const layB = device.createPipelineLayout({ bindGroupLayouts: [bgl0, bgl1] });
+  const meshBuffers = [
+    { arrayStride: 24, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }, { shaderLocation: 1, offset: 12, format: 'float32x3' }] },
+    { arrayStride: 28, attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x3' }, { shaderLocation: 3, offset: 12, format: 'float32x4' }] },
+  ];
+  const HDR = 'rgba16float', DEPTH = 'depth24plus';
+  const pipe = (layout, vs, fs, targets, cullMode, depthStencil) => device.createRenderPipeline({
+    layout,
+    vertex: { module, entryPoint: vs, buffers: vs === 'vsMesh' ? meshBuffers : [] },
+    fragment: { module, entryPoint: fs, targets },
+    primitive: { topology: 'triangle-list', cullMode },
+    depthStencil,
+  });
+  const add = { srcFactor: 'one', dstFactor: 'one', operation: 'add' };
+  const envPipe = pipe(layA, 'vsFull', 'fsEnv', [{ format: HDR }, { format: 'r32float' }], 'none', { format: DEPTH, depthWriteEnabled: true, depthCompare: 'always' });
+  const objPipe = pipe(layA, 'vsMesh', 'fsObj', [{ format: HDR }, { format: 'r32float' }], 'back', { format: DEPTH, depthWriteEnabled: true, depthCompare: 'less' });
+  const thickPipe = pipe(layA, 'vsMesh', 'fsThick', [{ format: 'r16float', blend: { color: add, alpha: add } }], 'none', undefined);
+  const blitPipe = pipe(layB, 'vsFull', 'fsBlit', [{ format }], 'none', { format: DEPTH, depthWriteEnabled: false, depthCompare: 'always' });
+  const skinPipe = pipe(layB, 'vsMesh', 'fsSkin', [{ format }], 'back', { format: DEPTH, depthWriteEnabled: true, depthCompare: 'less' });
+
+  const BU = GPUBufferUsage;
+  const dynBuf = device.createBuffer({ size: skin.dyn.byteLength, usage: BU.VERTEX | BU.COPY_DST });
+  const statBuf = device.createBuffer({ size: skin.stat.byteLength, usage: BU.VERTEX | BU.COPY_DST });
+  const idxBuf = device.createBuffer({ size: skin.index.byteLength, usage: BU.INDEX | BU.COPY_DST });
+  device.queue.writeBuffer(statBuf, 0, skin.stat);
+  device.queue.writeBuffer(idxBuf, 0, skin.index);
+  const uni = new Float32Array(56 + 96 * 4);
+  const uniBuf = device.createBuffer({ size: uni.byteLength, usage: BU.UNIFORM | BU.COPY_DST });
+  const bind0 = device.createBindGroup({ layout: bgl0, entries: [{ binding: 0, resource: { buffer: uniBuf } }] });
+  const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+
+  let rt = null;
+  function resize() {
+    const dpr = Math.min(Math.max(devicePixelRatio || 1, 1.25), 2);
+    const w = Math.max(1, Math.round(canvas.clientWidth * dpr)), h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+    if (rt && rt.w === w && rt.h === h) return;
+    canvas.width = w; canvas.height = h;
+    rt?.list.forEach(t => t.destroy());
+    const RA = GPUTextureUsage.RENDER_ATTACHMENT, TB = GPUTextureUsage.TEXTURE_BINDING;
+    const mk = (fmt, usage) => device.createTexture({ size: [w, h], format: fmt, usage });
+    const bg = mk(HDR, RA | TB), lin = mk('r32float', RA | TB), thick = mk('r16float', RA | TB), depth = mk(DEPTH, RA);
+    rt = {
+      w, h, list: [bg, lin, thick, depth],
+      bg: bg.createView(), lin: lin.createView(), thick: thick.createView(), depth: depth.createView(),
+      bind: device.createBindGroup({ layout: bgl1, entries: [
+        { binding: 0, resource: bg.createView() }, { binding: 1, resource: lin.createView() },
+        { binding: 2, resource: thick.createView() }, { binding: 3, resource: sampler },
+      ] }),
+    };
+  }
+
+  const L = v3.norm([0.35, 1, 0.25]);
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    resize();
+    updateCamera(rt.w / rt.h);
+
+    sim.advance(dt);
+    for (const ev of sim.events.splice(0)) {
+      if (ev.type !== 'peel') continue;
+      fx.touch = ev.pos; fx.touchT = 0; fx.excite = Math.min(1, fx.excite + 0.6);
+      if (pointers.has(ev.id)) pointers.get(ev.id).mode = 'peeled';
+    }
+    const X = sim.interp();
+    skin.update(X, sim.bodyRotation());
+    device.queue.writeBuffer(dynBuf, 0, skin.dyn);
+
+    const armGrab = [...sim.grabs.values()].find(g => g.kind === 'arm');
+    fx.suction = armGrab ? Math.min(1, fx.suction + dt * 4) : Math.max(0, fx.suction - dt * 1.5);
+    fx.excite = Math.max(0, fx.excite - dt * 0.5);
+    fx.touchT += dt;
+    if (!sim.grabs.size && !sim.paused) {
+      const c = sim.bodyCenter(X), k = Math.min(1, dt * (reduceMQ.matches ? 0.6 : 1.2));
+      cam.target[0] += (Math.max(-3, Math.min(3, c[0])) - cam.target[0]) * k;
+      cam.target[2] += (Math.max(-2.5, Math.min(2.5, c[2])) - cam.target[2]) * k;
+    }
+
+    const B = camBasis;
+    uni.set(B.VP, 0);
+    uni.set([...B.eye, now / 1000], 16);
+    uni.set([...B.fwd, B.ref], 20);
+    uni.set([...B.right, B.tanH * B.aspect], 24);
+    uni.set([...B.up, B.tanH], 28);
+    uni.set([...L, reduceMQ.matches ? 1 : 0], 32);
+    uni.set([1.5 - 1.25 * sim.params.clarity, sim.params.chroma, fx.excite, 1.1], 36);
+    uni.set([rt.w, rt.h, 1 / rt.w, 1 / rt.h], 40);
+    uni.set([fx.grabMat, fx.grabU, fx.suction, 0], 44);
+    uni.set([...fx.touch, fx.touchT], 48);
+    uni[52] = sim.shadowSpheres(X, uni.subarray(56));
+    device.queue.writeBuffer(uniBuf, 0, uni);
+
+    const enc = device.createCommandEncoder();
+    const bgPass = enc.beginRenderPass({
+      colorAttachments: [
+        { view: rt.bg, loadOp: 'clear', clearValue: [0, 0, 0, 1], storeOp: 'store' },
+        { view: rt.lin, loadOp: 'clear', clearValue: [1e4, 0, 0, 0], storeOp: 'store' },
+      ],
+      depthStencilAttachment: { view: rt.depth, depthLoadOp: 'clear', depthClearValue: 1, depthStoreOp: 'store' },
+    });
+    bgPass.setBindGroup(0, bind0);
+    bgPass.setPipeline(envPipe);
+    bgPass.draw(3);
+    bgPass.setPipeline(objPipe);
+    bgPass.setVertexBuffer(0, dynBuf); bgPass.setVertexBuffer(1, statBuf); bgPass.setIndexBuffer(idxBuf, 'uint32');
+    bgPass.drawIndexed(skin.organCount + skin.eyeCount, 1, skin.skinCount);
+    bgPass.end();
+
+    const thPass = enc.beginRenderPass({ colorAttachments: [{ view: rt.thick, loadOp: 'clear', clearValue: [0, 0, 0, 0], storeOp: 'store' }] });
+    thPass.setBindGroup(0, bind0);
+    thPass.setPipeline(thickPipe);
+    thPass.setVertexBuffer(0, dynBuf); thPass.setVertexBuffer(1, statBuf); thPass.setIndexBuffer(idxBuf, 'uint32');
+    thPass.drawIndexed(skin.skinCount);
+    thPass.end();
+
+    const fin = enc.beginRenderPass({
+      colorAttachments: [{ view: ctx.getCurrentTexture().createView(), loadOp: 'clear', clearValue: [0, 0, 0, 1], storeOp: 'store' }],
+      depthStencilAttachment: { view: rt.depth, depthLoadOp: 'load', depthStoreOp: 'store' },
+    });
+    fin.setBindGroup(0, bind0); fin.setBindGroup(1, rt.bind);
+    fin.setPipeline(blitPipe);
+    fin.draw(3);
+    fin.setPipeline(skinPipe);
+    fin.setVertexBuffer(0, dynBuf); fin.setVertexBuffer(1, statBuf); fin.setIndexBuffer(idxBuf, 'uint32');
+    fin.drawIndexed(skin.skinCount);
+    fin.end();
+    device.queue.submit([enc.finish()]);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+if (new URLSearchParams(location.search).has('debug')) {
+  window.__mimiika = {
+    sim, fx, cam,
+    project(p) {
+      const M = camBasis.VP, r = canvas.getBoundingClientRect();
+      const x = M[0] * p[0] + M[4] * p[1] + M[8] * p[2] + M[12], y = M[1] * p[0] + M[5] * p[1] + M[9] * p[2] + M[13], w = M[3] * p[0] + M[7] * p[1] + M[11] * p[2] + M[15];
+      return [r.left + (x / w * 0.5 + 0.5) * r.width, r.top + (0.5 - y / w * 0.5) * r.height];
+    },
+  };
+}
+
+main().catch(err => { console.error(err); fail(`初期化中にエラーが発生しました。${err.message}`); });
+</script>
+</body>
+</html>
